@@ -340,6 +340,29 @@ def uniform_crossover(parent_1, parent_2):
 
     return child
 
+def spatial_crossover(parent_1, parent_2):
+    """Crossover by spatial zone of the image.
+    Triangles whose center is in the upper half of the image come from parent 1.
+    Triangles whose center is in the lower half come from parent 2.
+    Exploits the fact that triangles cover distinct spatial zones."""
+    child = []
+
+    for tri_1, tri_2 in zip(parent_1, parent_2):
+        # Calculate center of triangle from parent 1
+        cx = (tri_1["p1"][0] + tri_1["p2"][0] + tri_1["p3"][0]) / 3
+        cy = (tri_1["p1"][1] + tri_1["p2"][1] + tri_1["p3"][1]) / 3
+        
+        # Upper half from parent 1, lower half from parent 2
+        if cy < HEIGHT / 2:
+            child.append(tri_1.copy())
+        else:
+            child.append(tri_2.copy())
+    return child
+
+def no_crossover(parent_1, parent_2):
+    """No crossover - child is a copy of parent 1, only mutation applies.
+    Used to evaluate the isolated contribution of crossover."""
+    return [triangle.copy() for triangle in parent_1]
 
 def apply_crossover(
     parent_1,
@@ -352,8 +375,39 @@ def apply_crossover(
 
     if crossover_type == "uniform":
         return uniform_crossover(parent_1, parent_2)
+    
+    if crossover_type == "none":
+        return no_crossover(parent_1, parent_2)
+    
+    if crossover_type == "spatial":
+        return spatial_crossover(parent_1, parent_2)
 
     raise ValueError(f"Unknown crossover type: {crossover_type}")
+
+
+# ============================================================
+# Diversity Metrics
+# ============================================================
+
+def individual_to_vector(individual):
+    genes = []
+    for tri in individual:
+        (x1, y1), (x2, y2), (x3, y3) = tri['p1'], tri['p2'], tri['p3']
+        r, g, b = tri['color']
+        genes.extend([
+            x1 / WIDTH, x2 / WIDTH, x3 / WIDTH,
+            y1 / HEIGHT, y2 / HEIGHT, y3 / HEIGHT,
+            r / 255.0, g / 255.0, b / 255.0,
+            float(np.clip(tri.get('alpha', 0.0), 0.0, 1.0)),
+            float(np.clip(tri.get('z', 0.0), 0.0, 1.0)),
+        ])
+    return np.asarray(genes, dtype=np.float32)
+
+
+def genotypic_variance(population):
+    """Variância média por locus na população."""
+    M = np.vstack([individual_to_vector(ind) for ind in population])
+    return float(np.mean(np.var(M, axis=0)))
 
 
 # ============================================================
@@ -373,7 +427,8 @@ def evolve_configurable(
     use_mutation_decay=False,
     min_mutation_rate=0.01,
     snapshot_generations=None,
-    print_every=None
+    print_every=None,
+    track_diversity=False
 ):
     """
     Runs a configurable Genetic Algorithm.
@@ -399,6 +454,7 @@ def evolve_configurable(
     )
 
     best_individual = None
+    diversity_history = []
 
     for gen in range(generations):
         rendered_images = [
@@ -428,6 +484,10 @@ def evolve_configurable(
 
         best_fitness_history.append(current_best_fit)
 
+        if track_diversity:
+            diversity_history.append(genotypic_variance(population))
+
+        
         if use_mutation_decay:
             current_mutation_rate = max(
                 min_mutation_rate,
@@ -506,5 +566,6 @@ def evolve_configurable(
         "background_color": background_color,
         "snapshots": snapshots,
         "mutation_rate_history": mutation_rate_history,
-        "best_rmse": best_fitness_history[-1]
+        "best_rmse": best_fitness_history[-1],
+        "diversity_history": diversity_history if track_diversity else None
     }
